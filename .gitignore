@@ -1,0 +1,17 @@
+
+# Python virtual environment
+.venv/
+
+# Competition datasets
+data/
+
+# Generated analysis outputs
+outputs/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment variables and macOS files
+.env
+.DS_Store
