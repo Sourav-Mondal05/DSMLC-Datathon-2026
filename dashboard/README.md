@@ -1,68 +1,118 @@
-# Invisible Oil Loss Detector — Real-Data Streamlit Dashboard
+# Invisible Oil Loss Detector — Streamlit decision dashboard
 
-**This version does not generate demo data.** It displays real historical production, failure, and maintenance information from the competition datasets and real ML scores from Member 2.
+This is a replacement for the earlier multi-page Streamlit demo. It is deliberately focused on the operational question: **Which producing wells show unexplained decline, which have elevated equipment-failure risk, and which should an operator investigate first?** It does **not** fabricate any records.
 
-## What is shown
+## What the site shows
 
-1. **Overview:** Actual number of well IDs, historical oil production and downtime totals, production/downtime time series, and recorded failure types.
-2. **Failure Risk:** Member 2's actual seven-day relative risk scores, ranked across wells.
-3. **Maintenance:** Actual computed inspection-priority ranking with an explicitly hypothetical loss-exposure scenario.
-4. **Well Explorer:** Real sensor readings and production histories for an individual well, plus recorded failure and job history.
-5. **Model Results:** The logged test ROC-AUC/PR-AUC, baseline comparison, and feature importance.
+| Tab | What it does | Data source |
+|---|---|---|
+| Overview | Historical daily oil trend, number of wells, ML scores, failure events, priority counts | Member 1 historical features + Member 2 priorities |
+| Hidden Oil Loss | Count and estimated shortfall of candidate decline days; investigate top wells | `possible_invisible_loss`, `potential_oil_loss_m3` from Member 1 |
+| Maintenance | Filter by field/priority; rank inspection candidates; optional hypothetical downtime exposure | `well_risk_predictions.csv` and `maintenance_priorities.csv` from Member 2 |
+| Well Explorer | Select a well and compare oil with prior 7-day baseline; examine pump signals and failures | Recent private engineered features and failure records |
+| Model Evidence | PR-AUC, baseline comparison, ROC-AUC, important warning indicators | `results/model_metrics.json` |
 
-## Required folder locations
+**Interpretation:** A `risk_score` is a relative rank, not a calibrated percent probability. `possible_invisible_loss` means a screening candidate, not verified hidden loss. Estimated exposure is a scenario, not actual prevented loss or financial savings.
+
+## Exact folder structure
 
 ```text
 DSMLC-Datathon-2026/
 ├── dashboard/
-│   ├── app.py
-│   ├── prepare_real_data.py
-│   ├── requirements.txt
-│   └── .streamlit/config.toml
-├── src/                      # existing Member 1 and Member 2 scripts
-├── data/                     # LOCAL ONLY; original Parquet files
-│   ├── daily_production.parquet
-│   ├── production_failures.parquet
-│   └── well_jobs.parquet
-├── outputs/                  # LOCAL ONLY; generated data
-│   ├── cleaned_production.parquet
-│   ├── real_daily.csv
-│   ├── real_area_daily.csv
-│   ├── real_wells.csv
-│   ├── real_well_history.csv
-│   ├── real_failures.csv
-│   ├── real_jobs.csv
-│   ├── real_data_summary.json
-│   ├── well_risk_predictions.csv
-│   └── maintenance_priorities.csv
-└── results/
-    └── model_metrics.json
+│   ├── app.py                       # NEW: complete Streamlit app
+│   ├── data_io.py                   # NEW: real ML and production output loader
+│   ├── build_exports.py             # NEW: creates private chart-ready tables
+│   ├── requirements.txt             # REPLACE: dependencies
+│   ├── README.md                    # REPLACE: this guide
+├── .streamlit/
+│   └── config.toml                  # NEW at repository root: UI theme
+├── tests/
+│   └── test_dashboard.py            # NEW: fast synthetic unit tests
+├── src/                              # KEEP: existing ML and data engineering scripts
+├── data/                             # PRIVATE: raw Parquet (Git-ignored)
+├── outputs/                          # PRIVATE: CSV and Parquet (Git-ignored)
+├── models/                           # PRIVATE: trained model (Git-ignored)
+└── results/model_metrics.json        # Current public ML evaluation
 ```
 
-The two original ML CSVs are produced by Member 2's scripts. The `real_*.csv` files are made by `prepare_real_data.py`.
+The older `dashboard/pages/`, `dashboard/utils/`, `dashboard/prepare_real_data.py`, and `dashboard/prepare_dashboard_data.py` are **no longer used** by the replacement application. You can remove them after confirming the new site works. Leave the rest of the repository unchanged.
 
-## Run in Windows PowerShell (from repository root)
+## Windows — run locally with real records
+
+Open VS Code at repository root and execute (one time):
 
 ```powershell
 python -m pip install -r dashboard/requirements.txt
+```
+
+Place the original three data files in local `data/` (do not commit them). If Member 1 and Member 2 have already run their code, skip their stages below; regenerate only if needed.
+
+```powershell
 python src/data_cleaning.py
-python dashboard/prepare_real_data.py
+python src/feature_engineering.py
+python src/train_model.py
 python src/predict.py
 python src/optimization.py
+python dashboard/build_exports.py
+```
+
+**Important order:** If `models/failure_model.joblib` already exists, training can be skipped. Otherwise `train_model.py` must run before `predict.py`. If `outputs/model_features.parquet` exists, data cleaning and feature engineering can also be skipped.
+
+Launch **local private mode**:
+
+```powershell
+$env:WELLGUARD_PRIVATE_LOCAL = "1"
 python -m streamlit run dashboard/app.py
 ```
 
-If you have not trained your model on this PC yet, run `python src/feature_engineering.py` and `python src/train_model.py` **before** `predict.py`.
+Open `http://localhost:8501`. The app reads actual private CSVs in `outputs/`, showing well-level rankings and history. Use **Refresh data** in the sidebar after regenerating outputs.
 
-Open **http://localhost:8501**. The app gives a clear error if the real production exports are missing; it never silently falls back to synthetic observations.
+Run unit tests:
 
-## Publishing safely
+```powershell
+python -m unittest discover -s tests -p test_dashboard.py -v
+```
 
-The competition briefing prohibits redistribution of the provided datasets. Keep original Parquet, well-level CSV exports, and potentially sensitive model artifacts out of public GitHub. Even a public app backed by a private database can reveal restricted records to its viewers. To make a publicly visible real-data demo, first get the provider's permission or build an approved non-sensitive aggregate-only version. This local version is designed to work without publishing restricted records.
+## Required private outputs and who generates them
 
-## Interpretation
+| Private file | Generated by |
+|---|---|
+| `outputs/model_features.parquet` | `src/feature_engineering.py` |
+| `outputs/well_risk_predictions.csv` | `src/predict.py` |
+| `outputs/maintenance_priorities.csv` | `src/optimization.py` |
+| `outputs/dashboard_daily.csv` | `dashboard/build_exports.py` |
+| `outputs/dashboard_loss_candidates.csv` | `dashboard/build_exports.py` |
+| `outputs/dashboard_well_recent.csv` | `dashboard/build_exports.py` |
+| `outputs/dashboard_well_areas.csv` | `dashboard/build_exports.py` |
+| `outputs/dashboard_failures.csv` | `dashboard/build_exports.py`, when failure log exists |
+| `outputs/dashboard_summary.json` | `dashboard/build_exports.py` |
+| `results/model_metrics.json` | `src/train_model.py` |
 
-- A `risk_score` is **relative and not calibrated**; do not call it an 80% chance of failure.
-- The maintenance priority formula is a **heuristic**, not a proven optimal dispatch plan.
-- Estimated exposed oil is a **hypothetical scenario**, not recoverable oil or savings.
-- Production readings are **daily historical summaries**, not live sensor data.
+All chart-ready outputs are derived from actual historical source records. No simulated data is generated. The private exports are ignored by the existing root `.gitignore`.
+
+## Public Streamlit Cloud deployment — restriction-aware
+
+**The competition briefing prohibits redistribution of the datasets without the provider's permission.** A public Streamlit app showing actual UWIs, well readings, or individual forecasts can redistribute restricted information even if files are stored privately. Therefore the app defaults to **PUBLIC MODE**, which NEVER reads `outputs/` or `data/`.
+
+- For an immediate public site, push the new dashboard code to the GitHub repository; deploy `main` → `dashboard/app.py`. It shows the published aggregate ML evaluation metrics and explains why private records are absent.
+- To show **real aggregate production charts publicly**, first obtain approval from the data provider (and team) to publish the non-identifying summary. `dashboard/build_exports.py` writes a *candidate* file at `outputs/public_aggregate_REVIEW.json`. This is **not automatically uploaded**. Review its content for confidentiality and permitted disclosure; after approval, copy it to `dashboard/approved_public_summary.json` and commit that reviewed file.
+- Never commit `data/`, `outputs/`, `models/`, UWI records, `*.parquet`, `*.joblib`, secrets, or unapproved derivatives.
+- Never set `WELLGUARD_PRIVATE_LOCAL=1` on a publicly accessible Streamlit deployment. That mode is only for authorized local use.
+
+## Files to commit
+
+Use a dedicated branch if working with teammates:
+
+```powershell
+git checkout -b feature/focused-dashboard
+git add dashboard/app.py dashboard/data_io.py dashboard/build_exports.py dashboard/requirements.txt dashboard/README.md  .streamlit/config.toml tests/test_dashboard.py
+git status
+git commit -m "Build focused Streamlit risk and production dashboard"
+git push -u origin feature/focused-dashboard
+```
+
+Open a PR, review, merge to `main`, and let Streamlit Cloud redeploy its configured app. Check that none of the private data files appear in `git status` staged changes.
+
+## Submission clarity
+
+This application **helps decide where to investigate**, not how to alter pump settings. It does not infer a causal benefit from maintenance or claim proven avoided failures. The historical evaluation results in `model_metrics.json` are provisional until reproduced with Member 1's exact feature file. Disclose AI assistance in the main repository README under competition rules.

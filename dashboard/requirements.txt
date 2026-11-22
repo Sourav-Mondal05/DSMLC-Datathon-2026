@@ -1,5 +1,4 @@
-# Libraries for the historical-data dashboard and its export script
-# Install from the repository root with: python -m pip install -r dashboard/requirements.txt
+# Dashboard web app, Parquet export, and interactive charts
 streamlit>=1.36,<2
 pandas>=2.1,<3
 numpy>=1.26,<3
