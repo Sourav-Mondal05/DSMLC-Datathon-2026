@@ -24,7 +24,7 @@ Optional: --oil-price-cad-per-m3 70 (hypothetical user-provided scenario)
 """
 import argparse
 from pathlib import Path
-import numpy as np
+import numpy as np 
 import pandas as pd
 from ml_utils import ROOT
 

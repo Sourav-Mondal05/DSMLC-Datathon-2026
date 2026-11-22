@@ -1,17 +1,25 @@
+# Competition repository safety rules
+# 1. Keep the dataset provider's original wells, jobs and failure data private.
+# 2. Keep the well-level model predictions and trained models private as well.
+# 3. Commit source scripts and aggregate non-sensitive plots only after review.
+# 4. This file replaces/extends the old .gitignore; do not delete old data.
 
-# Python virtual environment
+# Local Python tooling
 .venv/
-
-# Competition datasets
-data/
-
-# Generated analysis outputs
-outputs/
-
-# Python cache
 __pycache__/
 *.pyc
-
-# Environment variables and macOS files
-.env
+.ipynb_checkpoints/
 .DS_Store
+.env
+.env*
+
+# Original and processed competition datasets, even if placed in root
+/data/
+/outputs/
+/models/
+*.parquet
+*.csv.gz
+*.joblib
+*.pkl
+
+# Review /results output before publishing; aggregate metrics are usually okay.
