@@ -1,41 +1,32 @@
-"""WellGuard — simple Streamlit dashboard for the datathon.
+"""
+INVISIBLE OIL LOSS DETECTOR — REAL-DATA STREAMLIT WEBSITE
 
 What this file does
 -------------------
-1. Shows the outcomes of Member 1 (data engineering) and Member 2 (machine
-   learning + inspection prioritization) in ONE easy-to-run website.
-2. Loads PRIVATE local CSV files containing recent production, well risk
-   scores, maintenance priorities, and equipment failure history.
-3. Displays five tabs: Overview, Failure Risk, Maintenance, Well Explorer,
-   and Model Results. Provides filters, charts, and downloadable tables.
-4. Shows a helpful setup message if an input file is missing; it does not
-   invent production values or pretend demo scores came from a trained model.
-5. Never retrains the model. Run training/prediction scripts separately,
-   then refresh this dashboard to see the latest generated outputs.
+1. Shows actual historical well data prepared by prepare_real_data.py.
+2. Displays five sections: Overview, Failure Risk, Maintenance Priorities,
+   Individual Wells, and ML Validation. All plotted data comes from files.
+3. Connects Member 2's real outputs: well_risk_predictions.csv,
+   maintenance_priorities.csv, and results/model_metrics.json.
+4. Uses actual well IDs and failure events. It never generates synthetic wells,
+   simulated failures, fictional volumes, or randomly assigned risk values.
+5. If a required file is missing, displays a setup message instead of quietly
+   replacing the real dataset with demo data.
+6. Separates observed production, recorded failure events, model scores, and
+   scenario calculations. An uncalibrated risk score is not a probability.
+7. Reads restricted well-level data ONLY from local outputs/ and data/;
+   do not push any derived well-level tables or raw competition Parquet to
+   public GitHub, or publicly expose them without provider permission.
 
-Expected private inputs, relative to the project root
------------------------------------------------------
-- outputs/well_risk_predictions.csv   (from src/predict.py)
-- outputs/maintenance_priorities.csv (from src/optimization.py)
-- outputs/dashboard_daily.csv         (from prepare_dashboard_data.py)
-- outputs/dashboard_recent_well_daily.csv  (from prepare_dashboard_data.py)
-- outputs/dashboard_failures.csv      (optional, from prepare_dashboard_data.py)
-- results/model_metrics.json         (aggregate, from src/train_model.py)
+Run from repository root:
+    python -m streamlit run dashboard/app.py
 
-How to start
-------------
-From the repository root, run: streamlit run dashboard/app.py
-
-Scientific and data-use cautions
---------------------------------
-- A risk_score (e.g., 0.80) is an UNCALIBRATED relative model score, not an
-  80% probability that the well will fail.
-- 'Hypothetical exposed oil' is a scenario, not proven recoverable oil or
-  measured financial savings. Maintenance priorities need operator review.
-- Historical daily production data is not real-time sensor monitoring.
-- The outputs directory contains restricted well-level information and must
-  NOT be committed to a public GitHub repository.
+Prerequisites:
+    python dashboard/prepare_real_data.py
+    python src/predict.py
+    python src/optimization.py
 """
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -44,264 +35,295 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs"
 RESULTS = ROOT / "results"
 
-st.set_page_config(page_title="WellGuard | Oil Well Intelligence", page_icon="🛢️", layout="wide")
-
-# Small amount of styling; all main elements are native Streamlit controls.
+st.set_page_config(page_title="Invisible Oil Loss Detector", page_icon="🛢️", layout="wide")
 st.markdown("""
 <style>
-.block-container { max-width: 1350px; padding-top: 1.7rem; }
-h1, h2, h3 { color: #15333A; }
-div[data-testid="stMetric"] { border: 1px solid #E3ECEB; border-radius: 10px; padding: 12px; }
+.block-container {max-width: 1430px; padding-top: 1.5rem;}
+[data-testid="stMetric"] {background: #f3faf9; border: 1px solid #cde4e1;
+    border-radius: 13px; padding: 14px;}
+h1,h2,h3 {color: #0d2d3d;}
 </style>
 """, unsafe_allow_html=True)
 
+@st.cache_data(show_spinner=False)
+def _csv(path: str, modified: int) -> pd.DataFrame:
+    return pd.read_csv(path, low_memory=False)
 
 @st.cache_data(show_spinner=False)
-def read_csv_cached(path_string, modified):
-    """Cache a CSV until its file modification time changes."""
-    return pd.read_csv(path_string, low_memory=False)
+def _json(path: str, modified: int) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-@st.cache_data(show_spinner=False)
-def read_json_cached(path_string, modified):
-    with open(path_string, "r", encoding="utf-8") as file:
-        return json.load(file)
-
-
-def load_csv(name, date_columns=()):
-    path = OUT / name
-    if not path.is_file():
+def load_csv(name: str, *, location: Path = OUT, dates=()) -> pd.DataFrame:
+    p = location / name
+    if not p.is_file():
         return pd.DataFrame()
-    df = read_csv_cached(str(path), path.stat().st_mtime_ns).copy()
-    for c in date_columns:
-        if c in df:
-            df[c] = pd.to_datetime(df[c], errors="coerce")
+    df = _csv(str(p), p.stat().st_mtime_ns).copy()
+    for col in dates:
+        if col in df:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
     if "uwi" in df:
         df["uwi"] = df["uwi"].astype("string").str.strip()
     return df
 
 
-def load_metrics():
-    path = RESULTS / "model_metrics.json"
-    return read_json_cached(str(path), path.stat().st_mtime_ns) if path.is_file() else {}
+def load_json(name: str, *, location: Path) -> dict:
+    p = location / name
+    return _json(str(p), p.stat().st_mtime_ns) if p.is_file() else {}
 
 
-def fmt(value, digits=1):
-    return f"{value:,.{digits}f}" if pd.notna(value) else "—"
+def num(value, decimals=0):
+    return f"{value:,.{decimals}f}" if pd.notna(value) else "—"
 
 
-def download(df, filename):
-    if not df.empty:
-        st.download_button("Download displayed table (CSV)", df.to_csv(index=False).encode("utf-8"),
-                           filename, "text/csv", key="dl_" + filename)
+def show_table(df, cols=None, title=None, max_rows=50):
+    if title:
+        st.markdown(f"**{title}**")
+    if df.empty:
+        st.info("No matching records found.")
+        return
+    if cols:
+        df = df[[x for x in cols if x in df.columns]]
+    st.dataframe(df.head(max_rows), use_container_width=True, hide_index=True)
 
 
-def missing_file_help(files):
-    st.info("To display this section, generate the following private local file(s): "
-            + ", ".join(f"`outputs/{name}`" for name in files))
+def missing(name: str, instructions: str = ""):
+    st.info(f"Missing private file: `outputs/{name}`. {instructions}")
 
 
-# Load only compact, precomputed CSVs. The original 5-million-row Parquet file
-# is intentionally not opened on every Streamlit page refresh.
-daily = load_csv("dashboard_daily.csv", ["production_date"])
-recent = load_csv("dashboard_recent_well_daily.csv", ["production_date"])
-failures = load_csv("dashboard_failures.csv", ["failure_start_date"])
-risks = load_csv("well_risk_predictions.csv", ["as_of_date"])
-priorities = load_csv("maintenance_priorities.csv", ["as_of_date"])
-metrics = load_metrics()
+daily = load_csv("real_daily.csv", dates=["production_date"])
+area_daily = load_csv("real_area_daily.csv", dates=["production_date"])
+wells = load_csv("real_wells.csv", dates=["first_date", "last_date"])
+history = load_csv("real_well_history.csv", dates=["production_date"])
+failures = load_csv("real_failures.csv", dates=["failure_start_date"])
+jobs = load_csv("real_jobs.csv", dates=["last_job_date"])
+risks = load_csv("well_risk_predictions.csv", dates=["as_of_date"])
+priorities = load_csv("maintenance_priorities.csv", dates=["as_of_date"])
+metrics = load_json("model_metrics.json", location=RESULTS)
+summary = load_json("real_data_summary.json", location=OUT)
 
-if not risks.empty and {"uwi", "risk_score"}.issubset(risks.columns):
-    risks["risk_score"] = pd.to_numeric(risks["risk_score"], errors="coerce")
-    risks = risks.dropna(subset=["uwi", "risk_score"])
-    risks = risks[risks["risk_score"].between(0, 1)]
-    risks = risks.sort_values("as_of_date" if "as_of_date" in risks else "risk_score")
-    risks = risks.drop_duplicates("uwi", keep="last")
-    risks["risk_percentile"] = risks["risk_score"].rank(pct=True) * 100
-else:
-    risks = pd.DataFrame()
+st.title("🛢️ Invisible Oil Loss Detector")
+st.caption("Real historical oil-well production • equipment failure risk • maintenance decision support")
+st.info("All figures displayed are computed from provided historical datasets or the trained model. "
+        "There is **no synthetic-data fallback**. The source records are historical, not live telemetry.")
 
-if not priorities.empty and "priority_score" in priorities:
-    priorities["priority_score"] = pd.to_numeric(priorities["priority_score"], errors="coerce")
+if daily.empty or wells.empty:
+    st.error("Real production files are not available. This site does not show fabricated data.")
+    st.code("python src/data_cleaning.py\npython dashboard/prepare_real_data.py\n"
+            "python -m streamlit run dashboard/app.py", language="powershell")
+    st.warning("Keep private well-level CSV and Parquet files outside public GitHub. "
+               "A public deployment showing restricted well-level records needs permission from the data provider.")
+    st.stop()
 
-st.title("🛢️ WellGuard — Oil Well Intelligence")
-st.caption("Historical production monitoring · 7-day failure-risk ranking · inspection priorities")
-st.warning("Decision-support prototype. Risk scores are **relative, uncalibrated ML scores**—not failure probabilities. "
-           "Production-loss figures are estimates or hypothetical scenarios, not proven savings.", icon="ℹ️")
-
+# An explicit source-date filter makes it clear what time period is displayed.
+all_areas = sorted(wells.get("field_operating_area", pd.Series(dtype=str)).dropna().unique().tolist())
 with st.sidebar:
-    st.header("Input files")
-    status = [
-        ("ML predictions", not risks.empty),
-        ("Maintenance priorities", not priorities.empty),
-        ("Production summaries", not daily.empty and not recent.empty),
-        ("Failure history", not failures.empty),
-        ("Model metrics", bool(metrics)),
-    ]
-    for label, ready in status:
-        st.write(("✅ " if ready else "◻️ ") + label)
-    st.caption("Files are read from the repository's private `outputs/` folder, and from `results/` for metrics.")
-    if st.button("Refresh data"):
+    st.header("Filters")
+    area = st.selectbox("Operating area", ["All areas"] + all_areas)
+    first_day = daily["production_date"].min().date()
+    last_day = daily["production_date"].max().date()
+    dates = st.date_input("Historical date range", value=(first_day, last_day),
+                          min_value=first_day, max_value=last_day)
+    st.divider()
+    st.caption(f"Data source: cleaned production records ({first_day} to {last_day})")
+    st.caption(f"Total wells in prepared data: {len(wells):,}")
+    if st.button("Reload files"):
         st.cache_data.clear()
         st.rerun()
 
-overview_tab, risk_tab, maintenance_tab, well_tab, quality_tab = st.tabs([
+if not isinstance(dates, (list, tuple)) or len(dates) != 2:
+    st.info("Select both the start and end date to continue.")
+    st.stop()
+start, end = pd.Timestamp(dates[0]), pd.Timestamp(dates[1])
+filtered_wells = wells if area == "All areas" else wells[wells["field_operating_area"] == area]
+if area == "All areas":
+    selected_daily = daily[daily["production_date"].between(start, end)].copy()
+else:
+    selected_daily = area_daily[
+        area_daily["production_date"].between(start, end)
+        & area_daily["field_operating_area"].eq(area)
+    ].copy()
+selected_daily = selected_daily.sort_values("production_date")
+selected_failures = failures.copy()
+if not failures.empty:
+    selected_failures = failures[failures["failure_start_date"].between(start, end)].copy()
+    if area != "All areas" and "field_operating_area" in selected_failures:
+        selected_failures = selected_failures[selected_failures["field_operating_area"].eq(area)]
+
+# Join only to select the current area; no row multiplication or hidden label use.
+well_ids = set(filtered_wells["uwi"].dropna().astype(str))
+if "uwi" in risks:
+    risks = risks[risks["uwi"].isin(well_ids)].sort_values("as_of_date")
+    risks = risks.drop_duplicates("uwi", keep="last")
+if "uwi" in priorities:
+    priorities = priorities[priorities["uwi"].isin(well_ids)]
+
+t1, t2, t3, t4, t5 = st.tabs([
     "📊 Overview", "🛡️ Failure Risk", "🛠️ Maintenance", "🔎 Well Explorer", "📈 Model Results"
 ])
 
-with overview_tab:
-    st.subheader("Field overview")
-    left, mid, right = st.columns(3)
-    left.metric("Wells scored by ML", f"{risks['uwi'].nunique():,}" if not risks.empty else "—")
-    high_count = int((priorities["priority"] == "High").sum()) if "priority" in priorities else None
-    mid.metric("High inspection priority", f"{high_count:,}" if high_count is not None else "—")
-    if not daily.empty and "total_oil_m3" in daily:
-        end = daily["production_date"].max()
-        last_30 = daily[daily["production_date"] >= end - pd.Timedelta(days=29)]
-        right.metric("Oil produced · last 30 calendar days (m³)", fmt(last_30["total_oil_m3"].sum(), 0))
-    else:
-        right.metric("Recent oil produced", "—")
+with t1:
+    st.subheader("Production and reliability overview")
+    a, b, c, d = st.columns(4)
+    a.metric("Well IDs in selected area", f"{len(filtered_wells):,}")
+    b.metric("Oil produced · m³", num(selected_daily["oil_m3"].sum()))
+    c.metric("Downtime · hours", num(selected_daily["downtime_hours"].sum()))
+    d.metric("Recorded failures", f"{len(selected_failures):,}" if not failures.empty else "Unavailable")
 
-    left, right = st.columns([1.5, 1])
-    with left:
-        st.markdown("**Daily field oil production**")
-        if not daily.empty and {"production_date", "total_oil_m3"}.issubset(daily.columns):
-            last_90 = daily.sort_values("production_date").tail(90)
-            fig = px.line(last_90, x="production_date", y="total_oil_m3",
-                          labels={"production_date": "Date", "total_oil_m3": "Oil (m³)"})
-            fig.update_traces(line_color="#137A77")
+    if selected_daily.empty:
+        st.warning("No production observations match these filters.")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Daily oil production — actual reported totals**")
+            fig = px.line(selected_daily, x="production_date", y="oil_m3",
+                          labels={"production_date": "Date", "oil_m3": "Oil production (m³)"})
+            fig.update_traces(line_color="#148d8b")
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.markdown("**Daily downtime — reported hours**")
+            fig = px.line(selected_daily, x="production_date", y="downtime_hours",
+                          labels={"production_date": "Date", "downtime_hours": "Downtime (hours)"})
+            fig.update_traces(line_color="#da8253")
+            st.plotly_chart(fig, use_container_width=True)
+    col1, col2 = st.columns([1, 1.3])
+    with col1:
+        st.markdown("**Recorded failure types**")
+        if not selected_failures.empty and "failure_type" in selected_failures:
+            counts = selected_failures["failure_type"].fillna("Unknown").value_counts().reset_index()
+            counts.columns = ["Failure component", "Events"]
+            fig = px.bar(counts.head(12), x="Failure component", y="Events")
             st.plotly_chart(fig, use_container_width=True)
         else:
-            missing_file_help(["dashboard_daily.csv"])
-    with right:
-        st.markdown("**Inspection priority counts**")
-        if "priority" in priorities:
-            counts = priorities["priority"].value_counts().rename_axis("Priority").reset_index(name="Wells")
-            fig = px.bar(counts, x="Priority", y="Wells", color="Priority",
-                         color_discrete_map={"High": "#C95E5E", "Medium": "#E6A64A", "Low": "#137A77"})
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            missing_file_help(["maintenance_priorities.csv"])
+            st.info("No failure data available for this selection.")
+    with col2:
+        show_table(filtered_wells.sort_values("oil_m3", ascending=False),
+                   ["uwi", "field_operating_area", "oil_m3", "downtime_hours", "observations"],
+                   "Highest historical producing wells", 15)
+    st.caption("All production and downtime totals are historical observations; wells with no recent production may remain in the total well count.")
 
-    st.markdown("**Top wells needing review**")
-    if not priorities.empty and "priority_score" in priorities:
-        fields = [c for c in ["uwi", "priority", "risk_score", "priority_score",
-                              "daily_oil_at_risk_m3", "recommended_action"] if c in priorities]
-        top = priorities.sort_values("priority_score", ascending=False).head(15)
-        st.dataframe(top[fields], use_container_width=True, hide_index=True)
-    else:
-        missing_file_help(["maintenance_priorities.csv"])
-
-with risk_tab:
+with t2:
     st.subheader("Predictive maintenance — next 7 days")
-    st.caption("Ranks well-days by predicted association with a future recorded failure. "
-               "High risk rank ≠ known probability of failure.")
-    if risks.empty:
-        missing_file_help(["well_risk_predictions.csv"])
+    st.caption("The scores are **uncalibrated relative model scores**, not literal failure probabilities.")
+    if risks.empty or "risk_score" not in risks:
+        missing("well_risk_predictions.csv", "Run `python src/predict.py` after training the ML model.")
     else:
-        ranked = risks.sort_values("risk_score", ascending=False).copy()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Scored wells", f"{len(ranked):,}")
-        c2.metric("Highest raw model score", fmt(ranked["risk_score"].max(), 3))
-        c3.metric("Latest prediction date", str(ranked["as_of_date"].max().date()) if "as_of_date" in ranked else "—")
-        st.markdown("**Top 20 wells by relative risk rank**")
-        top = ranked.head(20).sort_values("risk_percentile")
-        fig = px.bar(top, x="risk_percentile", y="uwi", orientation="h",
-                     labels={"risk_percentile": "Relative risk percentile (0–100)", "uwi": "Well"})
-        fig.update_traces(marker_color="#C95E5E")
+        risks["risk_score"] = pd.to_numeric(risks["risk_score"], errors="coerce")
+        risks = risks.dropna(subset=["risk_score"])
+        risks["risk_rank_percentile"] = 100 * risks["risk_score"].rank(pct=True)
+        risks = risks.sort_values("risk_score", ascending=False)
+        st.metric("Wells scored", f"{len(risks):,}")
+        if "as_of_date" in risks:
+            st.caption(f"Scores are from historical snapshots through {risks['as_of_date'].max().date()}.")
+        n = st.slider("Top wells to display", min_value=5, max_value=min(50, len(risks)),
+                      value=min(20, len(risks))) if len(risks) >= 5 else len(risks)
+        top = risks.head(n).sort_values("risk_score")
+        fig = px.bar(top, x="risk_score", y="uwi", orientation="h",
+                     labels={"risk_score": "Relative model score (uncalibrated)", "uwi": "Well ID"})
+        fig.update_traces(marker_color="#148d8b")
+        fig.update_layout(height=max(350, n * 23))
         st.plotly_chart(fig, use_container_width=True)
-        fields = [c for c in ["uwi", "as_of_date", "risk_score", "risk_percentile",
-                              "oil_baseline_7d", "historical_shortfall_indicator_m3"] if c in ranked]
-        st.dataframe(ranked[fields], use_container_width=True, hide_index=True)
-        download(ranked[fields], "risk_ranking_private.csv")
+        show_table(risks, ["uwi", "as_of_date", "risk_score", "risk_rank_percentile", "oil_baseline_7d"],
+                   "Ranked well-level predictions", 100)
 
-with maintenance_tab:
-    st.subheader("Maintenance inspection priorities")
-    st.caption("Priority index = relative risk rank × recent daily oil baseline. "
-               "This is a screening heuristic, not a verified cost optimization.")
-    if priorities.empty:
-        missing_file_help(["maintenance_priorities.csv"])
+with t3:
+    st.subheader("Risk-based maintenance priorities")
+    st.caption("Priority is based on risk rank × recent production baseline. "
+               "It is a screening heuristic, not a validated economic optimizer.")
+    if priorities.empty or "priority" not in priorities:
+        missing("maintenance_priorities.csv", "Run `python src/optimization.py` after predictions.")
     else:
-        display = priorities.sort_values("priority_score", ascending=False).copy() if "priority_score" in priorities else priorities
+        cnt = priorities["priority"].fillna("Unknown").value_counts().reset_index()
+        cnt.columns = ["Priority", "Wells"]
         c1, c2, c3 = st.columns(3)
-        c1.metric("Wells prioritized", f"{len(display):,}")
-        c2.metric("High priority", str(int((display["priority"] == "High").sum())) if "priority" in display else "—")
-        if "hypothetical_exposed_oil_m3" in display:
-            c3.metric("Hypothetical oil exposure (m³)", fmt(pd.to_numeric(
-                display["hypothetical_exposed_oil_m3"], errors="coerce").sum(), 0))
+        c1.metric("High priority", int((priorities["priority"] == "High").sum()))
+        c2.metric("Medium priority", int((priorities["priority"] == "Medium").sum()))
+        c3.metric("Wells ranked", len(priorities))
+        fig = px.bar(cnt, x="Priority", y="Wells", color="Priority",
+                     color_discrete_map={"High": "#c85b5a", "Medium": "#de9b40", "Low": "#148d8b"})
+        st.plotly_chart(fig, use_container_width=True)
+        levels = st.multiselect("Priorities to display", ["High", "Medium", "Low"], default=["High", "Medium"])
+        choice = priorities[priorities["priority"].isin(levels)].copy()
+        if "priority_score" in choice:
+            choice = choice.sort_values("priority_score", ascending=False)
+        show_table(choice, ["uwi", "priority", "priority_score", "risk_score", "daily_oil_at_risk_m3",
+                            "hypothetical_exposed_oil_m3", "historical_median_job_estimate", "recommended_action"],
+                   "Maintenance review list", 100)
+        st.caption("Hypothetical exposed oil uses an assumed downtime duration; it does not equal proven recoverable production or savings.")
+
+with t4:
+    st.subheader("Individual well explorer")
+    options = sorted(filtered_wells["uwi"].dropna().astype(str).tolist())
+    if not options:
+        st.warning("No well IDs in this selection.")
+    else:
+        picked = st.selectbox("Choose a real well ID", options)
+        detail = filtered_wells[filtered_wells["uwi"].eq(picked)]
+        a, b, c = st.columns(3)
+        a.metric("Historical produced oil · m³", num(detail["oil_m3"].iloc[0]))
+        b.metric("Reported downtime · h", num(detail["downtime_hours"].iloc[0]))
+        score = risks[risks["uwi"].eq(picked)] if "uwi" in risks else pd.DataFrame()
+        c.metric("ML relative risk score", num(score["risk_score"].iloc[0], 3) if not score.empty else "Not scored")
+        st.markdown("**Real sensor and production history — last 120 calendar days**")
+        hist = history[history["uwi"].eq(picked)].sort_values("production_date") if "uwi" in history else pd.DataFrame()
+        if hist.empty:
+            st.info("No recent well-day records available for this well. The well may be inactive or have missing observations.")
         else:
-            c3.metric("Hypothetical oil exposure", "—")
-        st.info("Exposure assumes downtime for the specified scenario. It is **not** actual loss, "
-                "avoidable loss, or proven savings.")
-        fields = [c for c in ["uwi", "priority", "priority_score", "risk_score",
-                              "daily_oil_at_risk_m3", "hypothetical_exposed_oil_m3",
-                              "historical_median_job_estimate", "recommended_action"] if c in display]
-        st.dataframe(display[fields], use_container_width=True, hide_index=True)
-        download(display[fields], "maintenance_priorities_private.csv")
-
-with well_tab:
-    st.subheader("Well explorer — historical operating conditions")
-    if recent.empty or "uwi" not in recent:
-        missing_file_help(["dashboard_recent_well_daily.csv"])
-    else:
-        wells = sorted(recent["uwi"].dropna().astype(str).unique())
-        default_well = str(risks.sort_values("risk_score", ascending=False).iloc[0]["uwi"]) if not risks.empty else wells[0]
-        index = wells.index(default_well) if default_well in wells else 0
-        well = st.selectbox("Select a well", wells, index=index)
-        series = recent[recent["uwi"].astype(str) == well].sort_values("production_date")
-        risk_row = risks[risks["uwi"].astype(str) == well] if not risks.empty else pd.DataFrame()
-        priority_row = priorities[priorities["uwi"].astype(str) == well] if "uwi" in priorities else pd.DataFrame()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Oil produced · recent window (m³)", fmt(series["oil_produced_m3"].sum(), 0))
-        c2.metric("Relative model risk score", fmt(risk_row.iloc[0]["risk_score"], 3) if not risk_row.empty else "—")
-        c3.metric("Review priority", str(priority_row.iloc[0]["priority"]) if not priority_row.empty and "priority" in priority_row else "—")
-        for column, title in [
-            ("oil_produced_m3", "Daily oil produced (m³)"),
-            ("pcp_pump_rpm", "Pump rotation speed (RPM)"),
-            ("pump_efficiency_pct", "Pump efficiency (stored as decimal proportion)"),
-            ("hours_down", "Downtime (hours)"),
-        ]:
-            if column in series and series[column].notna().any():
-                fig = px.line(series, x="production_date", y=column, title=title,
-                              labels={"production_date": "Date", column: title})
-                fig.update_traces(line_color="#137A77")
+            available = [col for col in ["oil_produced_m3", "water_produced_m3", "hours_down",
+                                          "pcp_pump_rpm", "pump_efficiency_pct", "tubing_pressure_kpa",
+                                          "casing_pressure_kpa"] if col in hist and hist[col].notna().any()]
+            if available:
+                metric = st.selectbox("Measurement", available)
+                fig = px.line(hist, x="production_date", y=metric, markers=False,
+                              labels={"production_date": "Date", metric: metric.replace("_", " ")})
+                fig.update_traces(line_color="#148d8b")
                 st.plotly_chart(fig, use_container_width=True)
-        st.markdown("**Recorded failure history**")
-        if not failures.empty and "uwi" in failures:
-            history = failures[failures["uwi"].astype(str) == well]
-            if history.empty:
-                st.info("No recorded failure event for this well in the provided failure log.")
-            else:
-                st.dataframe(history.sort_values("failure_start_date", ascending=False),
-                             use_container_width=True, hide_index=True)
-        else:
-            missing_file_help(["dashboard_failures.csv"])
+            show_table(hist.sort_values("production_date", ascending=False),
+                       ["production_date", "oil_produced_m3", "hours_down", "pcp_pump_rpm", "pump_efficiency_pct"],
+                       "Recent daily observations", 30)
+        if "uwi" in failures:
+            f = failures[failures["uwi"].eq(picked)].sort_values("failure_start_date", ascending=False)
+            show_table(f, ["failure_start_date", "failure_type", "cause"], "Recorded failure history", 30)
+        if "uwi" in jobs:
+            show_table(jobs[jobs["uwi"].eq(picked)],
+                       ["jobs_logged", "last_job_date", "median_estimated_job_cost"],
+                       "Historical maintenance overview", 10)
 
-with quality_tab:
-    st.subheader("How reliable is the model?")
+with t5:
+    st.subheader("Machine learning — evaluation")
     if not metrics:
-        st.info("Model performance file missing: `results/model_metrics.json`. Run `python src/train_model.py`.")
+        st.info("`results/model_metrics.json` is missing. Train the model to view verified evaluation metrics.")
     else:
-        selected = metrics.get("selected_model", "Not recorded")
-        model = metrics.get("metrics", {}).get(selected, {})
-        test = model.get("test", {})
+        selected = metrics.get("selected_model", "Unknown")
+        test = metrics.get("metrics", {}).get(selected, {}).get("test", {})
         baseline = metrics.get("metrics", {}).get("oil_decline_baseline", {}).get("test", {})
-        st.write("**Selected model:**", selected.replace("_", " ").title())
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Test ROC-AUC", fmt(test.get("roc_auc"), 3))
-        c2.metric("Test PR-AUC", fmt(test.get("average_precision"), 3))
-        c3.metric("Baseline PR-AUC", fmt(baseline.get("average_precision"), 3))
-        c4.metric("Test positive-label rate", f"{100 * test['prevalence']:.2f}%" if test.get("prevalence") is not None else "—")
-        st.caption("Testing uses later dates. Positive labels are well-days, not distinct equipment failures. "
-                   "These are historical evaluation results, not live operating performance.")
-        st.markdown("**Model limitations**")
-        for note in metrics.get("notes", []):
-            st.write("• " + str(note))
-        st.caption("Verify the recorded metrics against your team’s latest rerun of the full data pipeline before presenting.")
+        st.write(f"**Model selected on validation data:** `{selected}`")
+        a, b, c = st.columns(3)
+        a.metric("Test ROC-AUC", num(test.get("roc_auc", float("nan")), 3))
+        b.metric("Test PR-AUC", num(test.get("average_precision", float("nan")), 3))
+        c.metric("Baseline PR-AUC", num(baseline.get("average_precision", float("nan")), 3))
+        st.caption("Chronological test observations are well-days, not distinct failure events. "
+                   "ROC-AUC is not classification accuracy, and PR-AUC should be compared with event prevalence.")
+        compared = []
+        for name, result in metrics.get("metrics", {}).items():
+            score = result.get("test", {}).get("average_precision")
+            if score is not None:
+                compared.append({"Model": name, "Test PR-AUC": score})
+        if compared:
+            fig = px.bar(pd.DataFrame(compared), x="Model", y="Test PR-AUC")
+            st.plotly_chart(fig, use_container_width=True)
+        imp = RESULTS / "feature_importance.png"
+        if imp.exists():
+            st.image(str(imp), caption="Permutation importance on validation records")
+        st.markdown("**Limitations**")
+        st.write("Recorded failures are sparse in earlier years; risk scores are uncalibrated; "
+                 "historical associations do not prove that a maintenance action prevents failure. "
+                 "Claims of saved oil or money require real intervention studies.")
 
 st.divider()
-st.caption("Built for the DSMLC Datathon 2026 · Historical decision-support demonstration · "
-           "Keep original and derived well-level data private.")
+st.caption("Datathon 2026 · Confidential Strathcona competition data must remain in approved environments. "
+           "Do not publish raw or well-level derived data without permission.")
