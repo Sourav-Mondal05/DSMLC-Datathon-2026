@@ -15,11 +15,12 @@ __pycache__/
 
 # Original and processed competition datasets, even if placed in root
 /data/
-/outputs/
-/models/
-*.parquet
-*.csv.gz
-*.joblib
-*.pkl
 
 # Review /results output before publishing; aggregate metrics are usually okay.
+data/
+outputs/
+models/
+*.parquet
+*.joblib
+.venv/
+__pycache__/
