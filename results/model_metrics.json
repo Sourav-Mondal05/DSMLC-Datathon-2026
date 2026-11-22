@@ -1,0 +1,163 @@
+{
+  "goal": "Recorded equipment failure within the next seven days",
+  "data_scope": "Producing well-days only; label-observable dates only",
+  "split_counts": {
+    "train": {
+      "rows": 267534,
+      "positive_rows": 7500
+    },
+    "validation": {
+      "rows": 108741,
+      "positive_rows": 3154
+    },
+    "test": {
+      "rows": 266017,
+      "positive_rows": 7031
+    }
+  },
+  "selected_model": "hist_gradient_boosting",
+  "metrics": {
+    "oil_decline_baseline": {
+      "validation": {
+        "rows": 108741,
+        "positive_rows": 3154,
+        "prevalence": 0.0290047,
+        "average_precision": 0.1449691336187723,
+        "roc_auc": 0.689101935726064,
+        "brier_score": 0.04436061241644813,
+        "precision_at_100_rows": 0.47
+      },
+      "test": {
+        "rows": 266017,
+        "positive_rows": 7031,
+        "prevalence": 0.02643064,
+        "average_precision": 0.11469606369042096,
+        "roc_auc": 0.6845522060394696,
+        "brier_score": 0.0499056306678152,
+        "precision_at_100_rows": 0.22
+      }
+    },
+    "logistic_regression": {
+      "validation": {
+        "rows": 108741,
+        "positive_rows": 3154,
+        "prevalence": 0.0290047,
+        "average_precision": 0.17315644945157282,
+        "roc_auc": 0.6985645814266866,
+        "brier_score": 0.02619078730264576,
+        "precision_at_100_rows": 0.31
+      },
+      "test": {
+        "rows": 266017,
+        "positive_rows": 7031,
+        "prevalence": 0.02643064,
+        "average_precision": 0.12136659931725331,
+        "roc_auc": 0.7111333189625858,
+        "brier_score": 0.024451012355162238,
+        "precision_at_100_rows": 0.17
+      }
+    },
+    "hist_gradient_boosting": {
+      "validation": {
+        "rows": 108741,
+        "positive_rows": 3154,
+        "prevalence": 0.0290047,
+        "average_precision": 0.2691693710698204,
+        "roc_auc": 0.8338991598371707,
+        "brier_score": 0.023887549231130154,
+        "precision_at_100_rows": 0.63
+      },
+      "test": {
+        "rows": 266017,
+        "positive_rows": 7031,
+        "prevalence": 0.02643064,
+        "average_precision": 0.1903418312852909,
+        "roc_auc": 0.8227684819367241,
+        "brier_score": 0.02326814940180897,
+        "precision_at_100_rows": 0.49
+      }
+    }
+  },
+  "feature_importance": [
+    {
+      "feature": "oil_decline_pct",
+      "ap_decrease": 0.15383329017312763
+    },
+    {
+      "feature": "hours_on_prod",
+      "ap_decrease": 0.11763578012739373
+    },
+    {
+      "feature": "hours_down",
+      "ap_decrease": 0.0748621241587018
+    },
+    {
+      "feature": "tubing_pressure_kpa",
+      "ap_decrease": 0.03670834474173745
+    },
+    {
+      "feature": "pcp_pump_rpm",
+      "ap_decrease": 0.0349245671976931
+    },
+    {
+      "feature": "casing_pressure_kpa",
+      "ap_decrease": 0.018256602538822386
+    },
+    {
+      "feature": "oil_produced_m3",
+      "ap_decrease": 0.013383725504724442
+    },
+    {
+      "feature": "oil_baseline_7d",
+      "ap_decrease": 0.012140037505169898
+    },
+    {
+      "feature": "pcp_pump_rod_torque_ftlb",
+      "ap_decrease": 0.009285354218523612
+    },
+    {
+      "feature": "pump_efficiency_pct_change",
+      "ap_decrease": 0.007691640320549531
+    },
+    {
+      "feature": "water_cut_pct",
+      "ap_decrease": 0.0061840061257916745
+    },
+    {
+      "feature": "oil_change_pct",
+      "ap_decrease": 0.004649283884079369
+    },
+    {
+      "feature": "pump_efficiency_pct",
+      "ap_decrease": 0.0018683798567001864
+    },
+    {
+      "feature": "pcp_pump_rpm_change",
+      "ap_decrease": 0.00022312934374374427
+    },
+    {
+      "feature": "has_downtime",
+      "ap_decrease": 0.0
+    },
+    {
+      "feature": "possible_invisible_loss",
+      "ap_decrease": 0.0
+    },
+    {
+      "feature": "oil_previous_m3",
+      "ap_decrease": -0.002211598152168981
+    },
+    {
+      "feature": "pcp_pump_electric_current_a",
+      "ap_decrease": -0.0069984542295506436
+    }
+  ],
+  "notes": [
+    "Outcomes are recorded failures, not all possible physical failures.",
+    "Daily rows from one failure can have overlapping seven-day labels.",
+    "Scores are not calibrated probabilities or guaranteed operational savings.",
+    "Historical failure log contains only two events before 2025; those years are excluded from supervised training.",
+    "Model evaluation uses later dates to reduce temporal leakage.",
+    "Saved model files and well-level predictions are restricted to local use."
+  ]
+}
